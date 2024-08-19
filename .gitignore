@@ -1,0 +1,51 @@
+# ROS specific files
+*.log
+*.db
+*.swp
+*.swo
+*.swn
+
+# Build files
+build/
+devel/
+install/
+log/
+*.d
+
+# CMake generated files
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+
+# Object files
+*.o
+*.a
+*.so
+
+# Executable files
+*.out
+*.exe
+
+# Dependency directories
+*.d
+*.dep
+
+# VSCode specific files
+.vscode/
+.vscode/*
+
+# IDE specific files (add more as needed for your IDE)
+.idea/
+*.suo
+*.user
+*.userosscache
+*.sln
+
+# Python virtual environment
+venv/
+ENV/
+
+# ROS workspace specific
+*.rosinstall
+*.rosdep

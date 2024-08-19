@@ -1,0 +1,25 @@
+<sdf version='1.6'>
+  <world name='default'>
+    <include>
+      <uri>model://sun</uri>
+    </include>
+    <include>
+      <uri>model://custom_ground_plane</uri>
+    </include>
+    <include>
+      <name>building</name>
+      <uri>model://building</uri>
+      <pose frame=''>0.941157 -0.334956 0 0 -0 0</pose>
+    </include>
+
+    <plugin name="ros_link_attacher_plugin" filename="libgazebo_ros_link_attacher.so" />
+
+    <gui fullscreen='0'>
+      <camera name='user_camera'>
+        <pose frame=''>12.804 6.59761 20.6782 0 0.963643 -2.65182</pose>
+        <view_controller>orbit</view_controller>
+        <projection_type>perspective</projection_type>
+      </camera>
+    </gui>
+  </world>
+</sdf>

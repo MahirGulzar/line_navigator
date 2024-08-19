@@ -1,0 +1,15 @@
+material Custom/Texture
+{
+  technique
+  {
+    pass
+    {
+      texture_unit
+      {
+        texture parking_lot.png
+        filtering anisotropic
+        max_anisotropy 16
+      }
+    }
+  }
+}

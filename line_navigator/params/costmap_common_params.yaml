@@ -1,0 +1,7 @@
+
+# Define the robot's footprint as a polygon
+footprint: [[-0.205, -0.155], [-0.205, 0.155], [0.077, 0.155], [0.077, -0.155]]
+
+inflation_radius: 2
+cost_scaling_factor: 10.0
+lethal_cost_threshold: 100

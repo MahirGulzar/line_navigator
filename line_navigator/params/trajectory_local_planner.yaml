@@ -1,0 +1,49 @@
+TrajectoryPlannerROS:
+  global_frame_id: odom
+  # Robot configuration parameters
+  max_vel_x: 0.22
+  min_vel_x: 0.05
+  max_vel_theta: 2.75
+  min_in_place_vel_theta: 0.4
+  acc_lim_x: 2.5
+  acc_lim_theta: 3.2
+
+  # Goal tolerance parameters
+  yaw_goal_tolerance: 0.2
+  xy_goal_tolerance: 0.1
+  latch_xy_goal_tolerance: false
+
+  # Forward simulation parameters
+  sim_time: 3
+  sim_granularity: 0.025
+  angular_sim_granularity: 0.025
+  vx_samples: 20
+  vtheta_samples: 40
+  controller_frequency: 10.0
+
+  # Trajectory scoring parameters
+  path_distance_bias: 32.0
+  goal_distance_bias: 24.0
+  occdist_scale: 0.01
+  forward_point_distance: 0.325
+  stop_time_buffer: 0.2
+  scaling_speed: 0.25
+  max_scaling_factor: 0.2
+
+  # Oscillation prevention parameters
+  oscillation_reset_dist: 0.05
+
+  # Obstacles parameters
+  pdist_scale: 0.6
+  gdist_scale: 0.8
+  occdist_scale: 0.01
+
+  # Reset the robot in case of oscillation
+  oscillation_reset_dist: 0.05
+
+  # Minimum velocity in place
+  min_in_place_vel_theta: 0.4
+
+  # Prefer short paths
+  meter_scoring: true
+  heading_lookahead: 0.325
