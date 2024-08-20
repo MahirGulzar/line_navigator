@@ -1,6 +1,6 @@
 <launch>
   <arg name="world_name" default="$(find gazebo_parking_world)/worlds/example.world" />
-  <arg name="localizer" default="amcl" doc="fake, amcl" />
+  <arg name="localizer" default="fake" doc="fake, amcl" />
   <arg name="model" default="waffle" />
   <arg name="x" default="5.4" />
   <arg name="y" default="4.75" />

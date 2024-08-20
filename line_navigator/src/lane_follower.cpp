@@ -123,17 +123,17 @@ void LaneFollower::imageCallback(const sensor_msgs::ImageConstPtr& rgb_data,
             }
         }
 
-        if (selected_line == cv::Vec4i())
-            return; // No valid line found
-
-        drawLineOnImage(rgb_image, selected_line);
-        point_cloud_.header.stamp = ros::Time::now();
-        point_cloud_pub_.publish(point_cloud_);
-
-        // Fix the paint targets for navigation
-        if (paint_marking_)
+        if (selected_line != cv::Vec4i())
         {
-            fixPaintTargets(selected_line, depth_image);
+            drawLineOnImage(rgb_image, selected_line);
+            point_cloud_.header.stamp = ros::Time::now();
+            point_cloud_pub_.publish(point_cloud_);
+
+            // Fix the paint targets for navigation
+            if (paint_marking_)
+            {
+                fixPaintTargets(selected_line, depth_image);
+            }
         }
         
     }
@@ -310,14 +310,6 @@ void LaneFollower::publishPointCloud()
     point_cloud_.data.resize(point_cloud_.width * point_cloud_.point_step);
     point_cloud_.is_dense = true;
 
-    // Verify pointcloud details
-    ROS_INFO("Point cloud width: %d", point_cloud_.width);
-    ROS_INFO("Point cloud height: %d", point_cloud_.height);
-    ROS_INFO("Point cloud point step: %d", point_cloud_.point_step);
-    ROS_INFO("Point cloud row step: %d", point_cloud_.row_step);
-    ROS_INFO("Point cloud data size: %d", point_cloud_.data.size());
-
-
     // Iterate through the start and end goal lists
     for (size_t i = 0; i < start_goal_list_.size(); ++i)
     {
@@ -328,7 +320,7 @@ void LaneFollower::publishPointCloud()
         for (size_t j = i * interpolated_points, k=0; j < ((i + 1) * interpolated_points); ++j, ++k)
         {
             
-            float t = static_cast<float>(k) / (interpolated_points - 1); // Normalized interpolation factor
+            float t = static_cast<float>(k) / ((interpolated_points + 20) - 1); // Normalized interpolation factor
             float x = start.x + t * (end.x - start.x);
             float y = start.y + t * (end.y - start.y);
             float z = start.z + t * (end.z - start.z);

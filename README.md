@@ -9,3 +9,7 @@ Build the workspace with provided packages and source it. Afterwards, run the fo
 ```
 roslaunch line_navigator navigation.launch
 ```
+
+# Demo
+
+![](https://github.com/MahirGulzar/line_navigator/blob/main/demo.gif)
