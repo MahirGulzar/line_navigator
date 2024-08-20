@@ -1,45 +1,40 @@
 #include "line_navigator/lane_follower.h"
-#include <cv_bridge/cv_bridge.h>
 
 
 LaneFollower::LaneFollower()
     : tf_listener_(tf_buffer_),
-      move_base_client_("move_base", true),
-      sync_(rgb_image_sub_, depth_image_sub_, camera_info_sub_, 10)
+      sync_(rgb_image_sub_, depth_image_sub_, camera_info_rgb_sub_, camera_info_depth_sub_, 10)
 {
     setupPublishersAndSubscribers();
     
-
-    point_cloud_.header.frame_id = "map";
-
     current_goal_index_ = 0;
     navigation_complete_ = false;
+    paint_marking_ = false;
 
+    // Prepare the point cloud message
+    point_cloud_.header.frame_id = "map";
     sensor_msgs::PointField point_field_x;
     point_field_x.name = "x";
     point_field_x.offset = 0;
     point_field_x.datatype = sensor_msgs::PointField::FLOAT32;
     point_field_x.count = 1;
-
     sensor_msgs::PointField point_field_y;
     point_field_y.name = "y";
     point_field_y.offset = 4;
     point_field_y.datatype = sensor_msgs::PointField::FLOAT32;
     point_field_y.count = 1;
-
     sensor_msgs::PointField point_field_z;
     point_field_z.name = "z";
     point_field_z.offset = 8;
     point_field_z.datatype = sensor_msgs::PointField::FLOAT32;
     point_field_z.count = 1;
-
     point_cloud_.fields.clear();
     point_cloud_.fields.push_back(point_field_x);
     point_cloud_.fields.push_back(point_field_y);
     point_cloud_.fields.push_back(point_field_z);
 
-    move_base_client_.waitForServer();
-    sync_.registerCallback(boost::bind(&LaneFollower::imageCallback, this, _1, _2, _3));
+    sync_.registerCallback(boost::bind(&LaneFollower::imageCallback, this, _1, _2, _3, _4));
+    paint_marking_sub_ = nh_.subscribe("/paint_markings", 1, &LaneFollower::paintMarkingCallback, this);
 }
 
 LaneFollower::~LaneFollower()
@@ -49,25 +44,24 @@ LaneFollower::~LaneFollower()
 
 void LaneFollower::setupPublishersAndSubscribers()
 {
-    image_pub_ = nh_.advertise<sensor_msgs::Image>("/camera/rgb/lane_following_image", 10);
+    image_pub_ = nh_.advertise<sensor_msgs::Image>("/camera/rgb/lane_detection", 10);
     goal_pub_ = nh_.advertise<geometry_msgs::PoseStamped>("/move_base_simple/goal", 10);
-    waypoints_pub_ = nh_.advertise<nav_msgs::Path>("/lane_waypoints", 10);
-    marker_pub_ = nh_.advertise<visualization_msgs::MarkerArray>("/visualization_marker", 10);
+    marker_pub_ = nh_.advertise<visualization_msgs::MarkerArray>("/lane_endpoints", 10);
     point_cloud_pub_ = nh_.advertise<sensor_msgs::PointCloud2>("/obstacles_cloud", 10);
 
     move_base_result_sub_ = nh_.subscribe("/move_base/result", 10, &LaneFollower::navigationResultCallback, this);
 
     rgb_image_sub_.subscribe(nh_, "/camera/rgb/image_raw", 1);
     depth_image_sub_.subscribe(nh_, "/camera/depth/image_raw", 1);
-    camera_info_sub_.subscribe(nh_, "/camera/rgb/camera_info", 1);
+    camera_info_rgb_sub_.subscribe(nh_, "/camera/rgb/camera_info", 1);
+    camera_info_depth_sub_.subscribe(nh_, "/camera/depth/camera_info", 1);
 }
 
 void LaneFollower::imageCallback(const sensor_msgs::ImageConstPtr& rgb_data,
                                   const sensor_msgs::ImageConstPtr& depth_data,
-                                  const sensor_msgs::CameraInfoConstPtr& camera_info)
+                                  const sensor_msgs::CameraInfoConstPtr& camera_info_rgb,
+                                  const sensor_msgs::CameraInfoConstPtr& camera_info_depth)
 {
-
-    
     cv_bridge::CvImagePtr cv_rgb_ptr, cv_depth_ptr;
     cv::Mat rgb_image, depth_image;
 
@@ -91,11 +85,8 @@ void LaneFollower::imageCallback(const sensor_msgs::ImageConstPtr& rgb_data,
         return;
     }
 
-
-    
-    camera_model_.fromCameraInfo(camera_info);
-
-    ROS_INFO("............ SitRep ...................");
+    camera_model_rgb_.fromCameraInfo(camera_info_rgb);
+    camera_model_depth_.fromCameraInfo(camera_info_depth);
 
     cv::Mat gray_image;
     cv::cvtColor(rgb_image, gray_image, cv::COLOR_BGR2GRAY);
@@ -107,7 +98,7 @@ void LaneFollower::imageCallback(const sensor_msgs::ImageConstPtr& rgb_data,
     cv::Canny(binary_image, edges, 50, 150);
 
     std::vector<cv::Vec4i> lines;
-    cv::HoughLinesP(edges, lines, 1, CV_PI / 180, 20, 20, 500);
+    cv::HoughLinesP(edges, lines, 1, CV_PI / 180, 200, 10, 100);
 
     if (!lines.empty())
     {
@@ -136,9 +127,14 @@ void LaneFollower::imageCallback(const sensor_msgs::ImageConstPtr& rgb_data,
             return; // No valid line found
 
         drawLineOnImage(rgb_image, selected_line);
-        convertToPointCloud(selected_line, depth_image);
         point_cloud_.header.stamp = ros::Time::now();
         point_cloud_pub_.publish(point_cloud_);
+
+        // Fix the paint targets for navigation
+        if (paint_marking_)
+        {
+            fixPaintTargets(selected_line, depth_image);
+        }
         
     }
 
@@ -164,26 +160,57 @@ void LaneFollower::imageCallback(const sensor_msgs::ImageConstPtr& rgb_data,
 
 void LaneFollower::drawLineOnImage(cv::Mat &image, const cv::Vec4i &line)
 {
-    cv::line(image, cv::Point(line[0], line[1]), cv::Point(line[2], line[3]), cv::Scalar(0, 255, 0), 2);
-    cv::circle(image, cv::Point(line[0], line[1]), 5, cv::Scalar(0, 0, 255), -1);
-    cv::circle(image, cv::Point(line[2], line[3]), 5, cv::Scalar(0, 0, 255), -1);
+    cv::line(image, cv::Point(line[0], line[1]), cv::Point(line[2], line[3]), cv::Scalar(0, 255, 0), 8);
+    cv::circle(image, cv::Point(line[0], line[1]), 10, cv::Scalar(0, 0, 255), -1);
+    cv::circle(image, cv::Point(line[2], line[3]), 10, cv::Scalar(0, 0, 255), -1);
 }
 
-void LaneFollower::convertToPointCloud(const cv::Vec4i &line, const cv::Mat &depth_image)
+void LaneFollower::fixPaintTargets(const cv::Vec4i &line, const cv::Mat &depth_image)
 {
     if (goal_list_.empty())
     {
-        float z_start = depth_image.at<uint16_t>(line[1], line[0]);
-        float z_end = depth_image.at<uint16_t>(line[3], line[2]);
+        // Get the transform from RGB camera frame to depth camera frame
+        tf2::Transform transform_rgb_to_depth;
+        try {
+            geometry_msgs::TransformStamped transformStamped = tf_buffer_.lookupTransform(camera_model_depth_.tfFrame(), camera_model_rgb_.tfFrame(), ros::Time(0));
+            tf2::fromMsg(transformStamped.transform, transform_rgb_to_depth);
+        } catch (tf2::TransformException &ex) {
+            ROS_WARN("%s", ex.what());
+            return;
+        }
 
-        cv::Point3f ray_start = camera_model_.projectPixelTo3dRay(cv::Point2d(line[0], line[1]));
-        cv::Point3f ray_end = camera_model_.projectPixelTo3dRay(cv::Point2d(line[2], line[3]));
+        // Convert RGB pixel to 3D ray in RGB camera frame
+        cv::Point3f ray_start = camera_model_rgb_.projectPixelTo3dRay(cv::Point2d(line[0], line[1]));
+        cv::Point3f ray_end = camera_model_rgb_.projectPixelTo3dRay(cv::Point2d(line[2], line[3]));
 
+        // Transform rays from RGB camera frame to depth camera frame
+        tf2::Vector3 ray_start_vec(ray_start.x, ray_start.y, ray_start.z);
+        tf2::Vector3 ray_end_vec(ray_end.x, ray_end.y, ray_end.z);
+
+        tf2::Vector3 ray_start_depth = transform_rgb_to_depth * ray_start_vec;
+        tf2::Vector3 ray_end_depth = transform_rgb_to_depth * ray_end_vec;
+
+        // Convert 3D coordinates in depth camera frame to 2D pixel coordinates
+        cv::Point2d pixel_start = camera_model_depth_.project3dToPixel(cv::Point3f(ray_start_depth.x(), ray_start_depth.y(), ray_start_depth.z()));
+        cv::Point2d pixel_end = camera_model_depth_.project3dToPixel(cv::Point3f(ray_end_depth.x(), ray_end_depth.y(), ray_end_depth.z()));
+
+        // Clamp coordinates to be within image bounds
+        pixel_start.x = std::max(0.0, std::min(pixel_start.x, (double)depth_image.cols - 1));
+        pixel_start.y = std::max(0.0, std::min(pixel_start.y, (double)depth_image.rows - 1));
+        pixel_end.x = std::max(0.0, std::min(pixel_end.x, (double)depth_image.cols - 1));
+        pixel_end.y = std::max(0.0, std::min(pixel_end.y, (double)depth_image.rows - 1));
+
+        // Retrieve depth values from depth image
+        float z_start = depth_image.at<uint16_t>(cvRound(pixel_start.y), cvRound(pixel_start.x));
+        float z_end = depth_image.at<uint16_t>(cvRound(pixel_end.y), cvRound(pixel_end.x));
+
+        // Convert 2D pixel coordinates to 3D coordinates in RGB camera frame using depth values
         float x_start = ray_start.x * z_start;
         float y_start = ray_start.y * z_start;
         float x_end = ray_end.x * z_end;
         float y_end = ray_end.y * z_end;
 
+        // Ensure that the start point is always below the end point, so that robot navigates from start to end
         if (z_start > z_end)
         {
             std::swap(x_start, x_end);
@@ -191,9 +218,10 @@ void LaneFollower::convertToPointCloud(const cv::Vec4i &line, const cv::Mat &dep
             std::swap(z_start, z_end);
         }
 
-        auto start_goal = getGoal(x_start, y_start, z_start, camera_model_.tfFrame());
-        auto end_goal = getGoal(x_end, y_end, z_end, camera_model_.tfFrame());
+        auto start_goal = getGoal(x_start, y_start, z_start, camera_model_rgb_.tfFrame());
+        auto end_goal = getGoal(x_end, y_end, z_end, camera_model_depth_.tfFrame());
 
+        // Calculate yaw angle from start to end goal
         float yaw_angle = std::atan2(end_goal.pose.position.y - start_goal.pose.position.y,
                                      end_goal.pose.position.x - start_goal.pose.position.x);
 
@@ -204,9 +232,8 @@ void LaneFollower::convertToPointCloud(const cv::Vec4i &line, const cv::Mat &dep
 
         goal_list_.push_back(start_goal);
         goal_list_.push_back(end_goal);
-
-        goal_pub_.publish(start_goal);
         marker_pub_.publish(getMarkers(goal_list_));
+        goal_pub_.publish(start_goal);
     }
 }
 
@@ -268,16 +295,10 @@ visualization_msgs::MarkerArray LaneFollower::getMarkers(const std::vector<geome
     return marker_array;
 }
 
-void LaneFollower::publishPointCloud(const geometry_msgs::Point& start, const geometry_msgs::Point& goal, size_t num_points)
+void LaneFollower::publishPointCloud()
 {
-    // Clear previous data
-    point_cloud_.data.clear();
-    
-    if (num_points < 2)
-    {
-        ROS_WARN("Number of points must be at least 2 for interpolation.");
-        return;
-    }
+    size_t interpolated_points = 100;
+    size_t num_points = start_goal_list_.size() * interpolated_points;
 
     // Set point cloud dimensions
     point_cloud_.width = num_points;
@@ -286,32 +307,8 @@ void LaneFollower::publishPointCloud(const geometry_msgs::Point& start, const ge
     
     point_cloud_.point_step = 12;
     point_cloud_.row_step = point_cloud_.point_step * point_cloud_.width;
-
-    sensor_msgs::PointField point_field_x;
-    point_field_x.name = "x";
-    point_field_x.offset = 0;
-    point_field_x.datatype = sensor_msgs::PointField::FLOAT32;
-    point_field_x.count = 1;
-
-    sensor_msgs::PointField point_field_y;
-    point_field_y.name = "y";
-    point_field_y.offset = 4;
-    point_field_y.datatype = sensor_msgs::PointField::FLOAT32;
-    point_field_y.count = 1;
-
-    sensor_msgs::PointField point_field_z;
-    point_field_z.name = "z";
-    point_field_z.offset = 8;
-    point_field_z.datatype = sensor_msgs::PointField::FLOAT32;
-    point_field_z.count = 1;
-
-    point_cloud_.fields.clear();
-    point_cloud_.fields.push_back(point_field_x);
-    point_cloud_.fields.push_back(point_field_y);
-    point_cloud_.fields.push_back(point_field_z);
-
-    // Resize data to fit the interpolated points
     point_cloud_.data.resize(point_cloud_.width * point_cloud_.point_step);
+    point_cloud_.is_dense = true;
 
     // Verify pointcloud details
     ROS_INFO("Point cloud width: %d", point_cloud_.width);
@@ -320,49 +317,67 @@ void LaneFollower::publishPointCloud(const geometry_msgs::Point& start, const ge
     ROS_INFO("Point cloud row step: %d", point_cloud_.row_step);
     ROS_INFO("Point cloud data size: %d", point_cloud_.data.size());
 
-    ROS_INFO("Generating interpolated points...");
 
-    // Generate interpolated points
-    for (size_t i = 0; i < num_points; ++i)
+    // Iterate through the start and end goal lists
+    for (size_t i = 0; i < start_goal_list_.size(); ++i)
     {
-        float t = static_cast<float>(i) / (num_points - 1); // Normalized interpolation factor
-        float x = start.x + t * (goal.x - start.x);
-        float y = start.y + t * (goal.y - start.y);
-        float z = start.z + t * (goal.z - start.z);
+        geometry_msgs::Point start = start_goal_list_[i].pose.position;
+        geometry_msgs::Point end = end_goal_list_[i].pose.position;
 
-        // Directly assign data
-        float* data_ptr = reinterpret_cast<float*>(&point_cloud_.data[i * point_cloud_.point_step]);
-        data_ptr[0] = x;
-        data_ptr[1] = y;
-        data_ptr[2] = z;
+        // Generate interpolated points
+        for (size_t j = i * interpolated_points, k=0; j < ((i + 1) * interpolated_points); ++j, ++k)
+        {
+            
+            float t = static_cast<float>(k) / (interpolated_points - 1); // Normalized interpolation factor
+            float x = start.x + t * (end.x - start.x);
+            float y = start.y + t * (end.y - start.y);
+            float z = start.z + t * (end.z - start.z);
+            
+            // Directly assign data
+            float* data_ptr = reinterpret_cast<float*>(&point_cloud_.data[j * point_cloud_.point_step]);
+            data_ptr[0] = x;
+            data_ptr[1] = y;
+            data_ptr[2] = z;
+        }
     }
-    
-    point_cloud_.is_dense = true;
-
     // Publish the point cloud
     point_cloud_pub_.publish(point_cloud_);
 }
 
 
+void LaneFollower::paintMarkingCallback(const std_msgs::Empty::ConstPtr &msg)
+{
+    ROS_INFO("Intiating marking process...");
+    paint_marking_ = true;
+}
 
 void LaneFollower::navigationResultCallback(const move_base_msgs::MoveBaseActionResult::ConstPtr &result_msg)
 {
-    int status = result_msg->status.status;
-    if (status == 3) // 'Succeeded' status in actionlib
+    if (paint_marking_)
     {
-        ROS_INFO("Goal reached successfully.");
-        ++current_goal_index_;
-
-        if (current_goal_index_ >= goal_list_.size())
+        int status = result_msg->status.status;
+        if (status == 3) // 'Succeeded' status in actionlib
         {
-            navigation_complete_ = true;
-            ROS_INFO("All goals navigated.");
+            ++current_goal_index_;
 
-            publishPointCloud(goal_list_.front().pose.position, goal_list_.back().pose.position, 100);
-        }
-        else
-        {
-            goal_pub_.publish(goal_list_[current_goal_index_]);
+            if (current_goal_index_ >= goal_list_.size())
+            {
+                navigation_complete_ = true;
+                ROS_INFO("All lane marking points navigated!!");
+                start_goal_list_.push_back(goal_list_.front());
+                end_goal_list_.push_back(goal_list_.back());
+                paint_marking_ = false;
+                goal_list_.clear();
+                current_goal_index_ = 0;
+
+                // Publish obstacles point cloud
+                publishPointCloud();
+            }
+            else
+            {
+                ROS_INFO("Reached a lane marking point..");
+                goal_pub_.publish(goal_list_[current_goal_index_]);
+            }
         }
     }
 }
