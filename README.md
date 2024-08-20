@@ -12,4 +12,4 @@ roslaunch line_navigator navigation.launch
 
 # Demo
 
-![](https://github.com/MahirGulzar/line_navigator/blob/main/demo.gif)
+[![](https://github.com/MahirGulzar/line_navigator/blob/main/thumbnail.png)](https://github.com/MahirGulzar/line_navigator/blob/main/demo.mkv)
